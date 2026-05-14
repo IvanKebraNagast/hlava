@@ -26,25 +26,29 @@
     position:fixed;bottom:32px;right:28px;
     width:48px;height:48px;border-radius:50%;
     background:rgba(0,0,0,.6);border:1.5px solid rgba(255,60,60,.5);
-    cursor:pointer;z-index:20;
-    display:flex;align-items:center;justify-content:center;
-    -webkit-tap-highlight-color:transparent;
-    transition:border-color .3s,background .3s;
+    cursor:pointer;z-index:20;display:flex;align-items:center;justify-content:center;
+    -webkit-tap-highlight-color:transparent;transition:.3s;
   }
-  #recBtn .dot{width:16px;height:16px;border-radius:50%;background:rgba(255,60,60,.75);transition:.2s;}
+  #recBtn .dot{width:16px;height:16px;border-radius:50%;background:rgba(255,60,60,.75);}
   #recBtn.rec{border-color:rgba(255,60,60,.95);background:rgba(50,0,0,.7);}
   #recBtn.rec .dot{background:#ff3c3c;animation:blink .8s ease-in-out infinite;}
   @keyframes blink{0%,100%{opacity:1;}50%{opacity:.25;}}
   #toast{
     position:fixed;bottom:92px;right:16px;
-    background:rgba(0,0,0,.82);color:rgba(0,255,200,.92);
-    font-family:system-ui,sans-serif;font-size:11px;line-height:1.55;
-    padding:8px 14px;border-radius:18px;
+    background:rgba(0,0,0,.85);color:rgba(0,255,200,.92);
+    font-family:system-ui,sans-serif;font-size:11px;line-height:1.6;
+    padding:9px 15px;border-radius:18px;
     border:1px solid rgba(0,255,200,.22);
     pointer-events:none;opacity:0;transition:opacity .4s;
-    max-width:210px;text-align:right;z-index:20;white-space:pre-line;
+    max-width:215px;text-align:right;z-index:20;white-space:pre-line;
   }
   #toast.show{opacity:1;}
+  /* Tap-to-play overlay — shown if iOS still blocks after unlock */
+  #tapPlay{
+    position:fixed;top:0;left:0;width:100%;height:100%;
+    z-index:15;display:flex;align-items:center;justify-content:center;
+    background:rgba(0,0,0,.01);
+  }
 </style>
 </head>
 <body>
@@ -57,37 +61,40 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
-/* ── detect iOS ──────────────────────────────────────────────────────── */
+/* ── iOS detection ─────────────────────────────────────────────── */
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-              (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+              (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
 
-/* ── renderer ────────────────────────────────────────────────────────── */
+/* ── Silent WAV (44 bytes) – used to pre-activate Audio on iOS ── */
+const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAAABkYXRhAAAAAA==';
+
+/* ── Renderer ──────────────────────────────────────────────────── */
 const canvas = document.getElementById('c');
-const renderer = new THREE.WebGLRenderer({canvas, antialias:true, preserveDrawingBuffer:true});
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setClearColor(0x000000, 1);
+const renderer = new THREE.WebGLRenderer({canvas,antialias:true,preserveDrawingBuffer:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+renderer.setSize(window.innerWidth,window.innerHeight);
+renderer.setClearColor(0x000000,1);
 const scene  = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(48, window.innerWidth/window.innerHeight, 0.1, 100);
+const camera = new THREE.PerspectiveCamera(48,window.innerWidth/window.innerHeight,0.1,100);
 camera.position.z = 3.4;
 
-/* ── glow sprite ─────────────────────────────────────────────────────── */
+/* ── Glow sprite ───────────────────────────────────────────────── */
 function mkSprite(){
-  const c=document.createElement('canvas'); c.width=c.height=64;
+  const c=document.createElement('canvas');c.width=c.height=64;
   const ctx=c.getContext('2d');
   const g=ctx.createRadialGradient(32,32,0,32,32,32);
-  g.addColorStop(0,   'rgba(210,255,250,1)');
-  g.addColorStop(0.2, 'rgba(0,245,218,1)');
-  g.addColorStop(0.5, 'rgba(0,195,175,.5)');
-  g.addColorStop(1,   'rgba(0,0,0,0)');
-  ctx.fillStyle=g; ctx.fillRect(0,0,64,64);
+  g.addColorStop(0,'rgba(210,255,250,1)');
+  g.addColorStop(.2,'rgba(0,245,218,1)');
+  g.addColorStop(.5,'rgba(0,195,175,.5)');
+  g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=g;ctx.fillRect(0,0,64,64);
   return new THREE.CanvasTexture(c);
 }
 
-/* ── head point-cloud ────────────────────────────────────────────────── */
+/* ── Head geometry ─────────────────────────────────────────────── */
 function buildHead(){
   const V=[],UL=[],LL=[];
-  const R=Math.random, nr=s=>(R()-.5)*s;
+  const R=Math.random,nr=s=>(R()-.5)*s;
 
   function surf(th,ph){
     let x=Math.sin(th)*Math.cos(ph)*0.74;
@@ -95,37 +102,37 @@ function buildHead(){
     let z=Math.sin(th)*Math.sin(ph);
     z*=z>=0?0.82:0.64;
     if(y>0.45){const t=(y-0.45)/0.65;x*=1+t*0.06;}
-    if(y>0.20&&y<0.55&&Math.abs(x)>0.50){const t=(Math.abs(x)-0.50)/0.25;z-=t*0.08;}
-    if(y<-0.55){const t=(-y-0.55)/0.58;x*=1-t*0.60;z*=1-t*0.35;}
-    if(y>0.72){const t=(y-0.72)/0.38;z-=t*0.10;}
+    if(y>0.20&&y<0.55&&Math.abs(x)>0.50){const t=(Math.abs(x)-.50)/.25;z-=t*.08;}
+    if(y<-0.55){const t=(-y-.55)/.58;x*=1-t*.60;z*=1-t*.35;}
+    if(y>0.72){const t=(y-.72)/.38;z-=t*.10;}
     if(z>0.32&&Math.abs(x)<0.26&&y>-0.20&&y<0.14){
-      const nd=Math.hypot(x/0.22,(y+0.04)/0.18); if(nd<1)z+=(1-nd)*0.12;
+      const nd=Math.hypot(x/.22,(y+.04)/.18);if(nd<1)z+=(1-nd)*.12;
     }
     return[x,y,z];
   }
-  const eyeH=(x,y,z)=>((x>0.12&&x<0.44||x<-0.12&&x>-0.44)&&y>0.10&&y<0.32&&z>0.54);
-  const lipG=(x,y,z)=>(Math.abs(x)<0.24&&y>-0.38&&y<-0.32&&z>0.62);
-  const nBr =(x,y,z)=>(Math.abs(x)<0.10&&y>-0.18&&y<0.10&&z>0.62);
-  const nDp =(x,y,z)=>(Math.abs(x)>0.06&&Math.abs(x)<0.20&&y>-0.24&&y<-0.14&&z>0.68);
+  const eyeH=(x,y,z)=>((x>.12&&x<.44||x<-.12&&x>-.44)&&y>.10&&y<.32&&z>.54);
+  const lipG=(x,y,z)=>(Math.abs(x)<.24&&y>-.38&&y<-.32&&z>.62);
+  const nBr =(x,y,z)=>(Math.abs(x)<.10&&y>-.18&&y<.10&&z>.62);
+  const nDp =(x,y,z)=>(Math.abs(x)>.06&&Math.abs(x)<.20&&y>-.24&&y<-.14&&z>.68);
 
   let att=0;
   while(V.length/3<9500&&att<200000){
     att++;
     const[x,y,z]=surf(Math.acos(2*R()-1),2*Math.PI*R());
-    if(eyeH(x,y,z)&&R()>0.18)continue;
-    if(lipG(x,y,z)&&R()>0.08)continue;
-    if(nBr(x,y,z)&&R()>0.45)continue;
-    if(nDp(x,y,z)&&R()>0.40)continue;
+    if(eyeH(x,y,z)&&R()>.18)continue;
+    if(lipG(x,y,z)&&R()>.08)continue;
+    if(nBr(x,y,z)&&R()>.45)continue;
+    if(nDp(x,y,z)&&R()>.40)continue;
     const px=x+nr(.016),py=y+nr(.016),pz=z+nr(.016);
-    if(pz>0.60&&Math.abs(px)<0.28){
-      if(py>-0.33&&py<-0.22)UL.push(V.length/3);
-      if(py>-0.46&&py<-0.34)LL.push(V.length/3);
+    if(pz>.60&&Math.abs(px)<.28){
+      if(py>-.33&&py<-.22)UL.push(V.length/3);
+      if(py>-.46&&py<-.34)LL.push(V.length/3);
     }
     V.push(px,py,pz);
   }
   /* nose */
   for(let i=0;i<160;i++){const t=R();V.push(nr(.09+t*.05),.08-t*.22+nr(.02),.74+t*.18+nr(.025));}
-  for(let i=0;i<260;i++){const a=R()*Math.PI*2,r=R()*.10;V.push(Math.cos(a)*r*1.2,-0.17+Math.sin(a)*r*.85+nr(.03),.92+nr(.04));}
+  for(let i=0;i<260;i++){const a=R()*Math.PI*2,r=R()*.10;V.push(Math.cos(a)*r*1.2,-.17+Math.sin(a)*r*.85+nr(.03),.92+nr(.04));}
   for(let s of[-1,1]){
     for(let i=0;i<160;i++){const t=R();V.push(s*(.09+t*.14)+nr(.02),-.18+nr(.07),.84-t*.08+nr(.03));}
     for(let i=0;i<70;i++)V.push(s*(.07+R()*.10),-.23+nr(.03),.80+nr(.025));
@@ -133,21 +140,19 @@ function buildHead(){
   /* lips */
   function ptU(x,y,z){UL.push(V.length/3);V.push(x,y,z);}
   function ptL(x,y,z){LL.push(V.length/3);V.push(x,y,z);}
-  for(let i=0;i<260;i++){const t=(R()-.5)*2;ptU(t*.27+nr(.022),-.30-(Math.abs(Math.abs(t)-.5))*.035+nr(.020),.78+nr(.022));}
-  for(let i=0;i<300;i++){const t=(R()-.5)*2;ptL(t*.25+nr(.022),-.42-(1-t*t)*.04+nr(.020),.78+nr(.022));}
+  for(let i=0;i<260;i++){const t=(R()-.5)*2;ptU(t*.27+nr(.022),-.30-(Math.abs(Math.abs(t)-.5))*.035+nr(.02),.78+nr(.022));}
+  for(let i=0;i<300;i++){const t=(R()-.5)*2;ptL(t*.25+nr(.022),-.42-(1-t*t)*.04+nr(.02),.78+nr(.022));}
   for(let i=0;i<70;i++)V.push(nr(.10),-.25+nr(.03),.82+nr(.02));
-  /* brows + eyelids */
+  /* brows+eyelids */
   for(let s of[-1,1]){
     for(let i=0;i<130;i++){const t=(R()-.5)*2;V.push(s*(.26+t*.20)+nr(.02),.36+(1-t*t)*.06+nr(.022),.64+nr(.022));}
     for(let i=0;i<120;i++){const t=(R()-.5)*2;V.push(s*(.28+t*.17)+nr(.018),.22+(1-t*t)*.08+nr(.018),.70+nr(.020));}
     for(let i=0;i<80;i++)V.push(s*(.28+nr(.16)),.14+nr(.018),.68+nr(.018));
     for(let i=0;i<40;i++)V.push(s*.14+nr(.025),.19+nr(.03),.68+nr(.02));
-    /* cheeks + ears */
     for(let i=0;i<120;i++)V.push(s*(.52+R()*.10)+nr(.025),.02+nr(.08),.62+R()*.10+nr(.02));
     for(let i=0;i<200;i++){const a=R()*Math.PI*2,r=R()*.12;V.push(s*(.74+r*.5)+nr(.02),.05+Math.sin(a)*.22*r*5+nr(.04),-.12+Math.cos(a)*.10*r*5+nr(.03));}
   }
   for(let i=0;i<160;i++)V.push(nr(.24),-.70+nr(.06),.50+R()*.12+nr(.02));
-  /* neck + collar + halo */
   for(let i=0;i<700;i++){const a=R()*Math.PI*2,r=.22+R()*.05;V.push(Math.cos(a)*r,-1.06+R()*.44,Math.sin(a)*r*.94);}
   for(let i=0;i<600;i++){const a=(i/600)*Math.PI*2+nr(.05);V.push(Math.cos(a)*(.92+nr(.06)),-1.08+nr(.04),Math.sin(a)*(.36+nr(.03)));}
   for(let i=0;i<700;i++){const a=(i/700)*Math.PI*2+nr(.014),r=1.46+nr(.012);V.push(Math.cos(a)*r*.95,Math.sin(a)*r,-.24+nr(.01));}
@@ -161,7 +166,7 @@ const geo=new THREE.BufferGeometry();
 geo.setAttribute('position',new THREE.BufferAttribute(verts,3));
 const isMobile=window.innerWidth<768;
 const mat=new THREE.PointsMaterial({
-  size:isMobile?.040:.014, map:mkSprite(),
+  size:isMobile?.040:.014,map:mkSprite(),
   blending:THREE.AdditiveBlending,transparent:true,depthWrite:false,
   color:new THREE.Color(0x00ffde),opacity:1.0,sizeAttenuation:true,
 });
@@ -169,48 +174,86 @@ const pts=new THREE.Points(geo,mat);
 pts.rotation.x=-.06;
 scene.add(pts);
 
-/* ── UI refs ─────────────────────────────────────────────────────────── */
+/* ── UI ────────────────────────────────────────────────────────── */
 const fi     = document.getElementById('fi');
 const r1     = document.getElementById('r1');
 const r2     = document.getElementById('r2');
 const recBtn = document.getElementById('recBtn');
 const toast  = document.getElementById('toast');
-
-function showRings(){r1.classList.remove('hide');r2.classList.remove('hide');}
-function hideRings(){r1.classList.add('hide');r2.classList.add('hide');}
+const hideRings=()=>{r1.classList.add('hide');r2.classList.add('hide');};
+const showRings=()=>{r1.classList.remove('hide');r2.classList.remove('hide');};
 let toastT;
-function showToast(msg,dur=3000){
+const showToast=(msg,dur=3000)=>{
   toast.textContent=msg;toast.classList.add('show');
   clearTimeout(toastT);toastT=setTimeout(()=>toast.classList.remove('show'),dur);
-}
+};
 
-/* ── audio state ─────────────────────────────────────────────────────── */
-let audioCtx=null,analyser=null,recordDest=null;
-let currentSrc=null;   // BufferSourceNode (desktop)
-let iosAudio=null;     // plain Audio element (iOS)
+/* ── Audio state ───────────────────────────────────────────────── */
 let playing=false, fakeLip=false, lipAmp=0;
 
-/* ── file handler ────────────────────────────────────────────────────── */
+/* ── iOS audio element – created ONCE at startup ──────────────── */
+let iosAud = null;
+let iosActivated = false;
+
+if(isIOS){
+  iosAud = new Audio();
+
+  /* KEY FIX: pre-activate the element on touchstart
+     (this fires BEFORE the file picker opens, still inside user gesture) */
+  fi.addEventListener('touchstart', ()=>{
+    if(iosActivated) return;
+    iosActivated = true;
+    iosAud.src = SILENT;
+    iosAud.volume = 0;
+    const p = iosAud.play();
+    if(p) p.catch(()=>{});
+    iosAud.volume = 1; // restore for real playback
+  }, {passive:true});
+}
+
+/* ── Desktop: Web Audio API ────────────────────────────────────── */
+let audioCtx=null, analyser=null, recordDest=null, currentSrc=null;
+
+/* ── File handler ──────────────────────────────────────────────── */
 fi.addEventListener('change', async()=>{
   const file=fi.files[0]; if(!file)return;
 
-  /* stop anything currently playing */
+  /* stop previous */
   if(currentSrc){try{currentSrc.stop();}catch(e){}currentSrc=null;}
-  if(iosAudio){iosAudio.pause();iosAudio=null;}
+  if(iosAud) iosAud.pause();
   playing=false; fakeLip=false; lipAmp=0;
 
   if(isIOS){
-    /* ── iOS path: plain Audio element — works for ALL formats ──────── */
-    iosAudio=new Audio();
-    iosAudio.src=URL.createObjectURL(file);
-    iosAudio.play().then(()=>{
+    /* ── iOS path ──────────────────────────────────────────────── */
+    if(iosAud._url) URL.revokeObjectURL(iosAud._url);
+    iosAud._url = URL.createObjectURL(file);
+    iosAud.src  = iosAud._url;
+    iosAud.volume = 1;
+
+    const tryPlay = ()=> iosAud.play().then(()=>{
       playing=true; fakeLip=true;
       hideRings(); recBtn.classList.remove('hide');
-      iosAudio.onended=()=>{playing=false;lipAmp=0;showRings();if(isRecording)stopRec();};
-    }).catch(err=>{ showToast('Chyba prehrávania:\n'+err.message,4000); });
+    }).catch(err=>{
+      /* last resort: ask user to tap once more */
+      showToast('Ťukni na obrazovku pre spustenie', 3500);
+      canvas.addEventListener('click', ()=>{
+        iosAud.play().then(()=>{
+          playing=true; fakeLip=true;
+          hideRings(); recBtn.classList.remove('hide');
+        }).catch(e2=>showToast('Chyba:\n'+e2.message,4000));
+      },{once:true});
+    });
+
+    iosAud.onended=()=>{playing=false;lipAmp=0;showRings();if(isRecording)stopRec();};
+
+    /* small delay to let src load before play */
+    iosAud.load();
+    iosAud.addEventListener('canplay', ()=>tryPlay(), {once:true});
+    /* fallback if canplay doesn't fire within 1.5 s */
+    setTimeout(()=>{ if(!playing) tryPlay(); }, 1500);
 
   } else {
-    /* ── Desktop path: full Web Audio API ───────────────────────────── */
+    /* ── Desktop path ──────────────────────────────────────────── */
     if(!audioCtx){
       audioCtx=new(window.AudioContext||window.webkitAudioContext)();
       analyser=audioCtx.createAnalyser();
@@ -219,28 +262,28 @@ fi.addEventListener('change', async()=>{
       recordDest=audioCtx.createMediaStreamDestination();
       analyser.connect(recordDest);
     }
-    if(audioCtx.state==='suspended')await audioCtx.resume();
+    if(audioCtx.state==='suspended') await audioCtx.resume();
 
     try{
-      const ab=await file.arrayBuffer();
-      const buf=await audioCtx.decodeAudioData(ab);
-      currentSrc=audioCtx.createBufferSource();
-      currentSrc.buffer=buf;
+      const ab  = await file.arrayBuffer();
+      const buf = await audioCtx.decodeAudioData(ab);
+      currentSrc = audioCtx.createBufferSource();
+      currentSrc.buffer = buf;
       currentSrc.connect(analyser);
       currentSrc.start(0);
       playing=true; fakeLip=false;
       hideRings(); recBtn.classList.remove('hide');
       currentSrc.onended=()=>{playing=false;lipAmp=0;showRings();if(isRecording)stopRec();};
     }catch(err){
-      showToast('Chyba dekódovania:\n'+err.message,4000);
+      showToast('Chyba:\n'+err.message, 4000);
     }
   }
 });
 
-/* ── recording (desktop only) ────────────────────────────────────────── */
+/* ── Recording (desktop only) ──────────────────────────────────── */
 let recorder=null,recChunks=[],isRecording=false;
-const canRec=typeof MediaRecorder!=='undefined'&&
-             typeof HTMLCanvasElement.prototype.captureStream!=='undefined';
+const canRec = typeof MediaRecorder!=='undefined' &&
+               typeof HTMLCanvasElement.prototype.captureStream!=='undefined';
 
 recBtn.addEventListener('click',e=>{
   e.stopPropagation();
@@ -248,13 +291,14 @@ recBtn.addEventListener('click',e=>{
     showToast('Na iPhone:\nPotiahnuť zhora vpravo\n→ stlačiť ⏺ Screen Recording',4500);
     return;
   }
-  isRecording?stopRec():startRec();
+  isRecording ? stopRec() : startRec();
 });
 
 function startRec(){
-  const vid=canvas.captureStream(30);
-  const aud=recordDest.stream.getAudioTracks();
-  const combined=new MediaStream([...vid.getVideoTracks(),...aud]);
+  const combined=new MediaStream([
+    ...canvas.captureStream(30).getVideoTracks(),
+    ...recordDest.stream.getAudioTracks()
+  ]);
   const mime=MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
     ?'video/webm;codecs=vp9,opus':'video/webm';
   recorder=new MediaRecorder(combined,{mimeType:mime,videoBitsPerSecond:4_000_000});
@@ -277,24 +321,22 @@ function stopRec(){
   isRecording=false; recBtn.classList.remove('rec');
 }
 
-/* ── render loop ─────────────────────────────────────────────────────── */
+/* ── Render loop ───────────────────────────────────────────────── */
 let t=0; const fBuf=new Uint8Array(128);
-
 function animate(){
-  requestAnimationFrame(animate); t+=0.008;
+  requestAnimationFrame(animate); t+=.008;
   pts.rotation.y=Math.sin(t*.26)*.09;
 
   if(fakeLip&&playing){
-    /* realistic fake speech: irregular bursts ~3–5 Hz */
-    const raw=Math.max(0,Math.sin(t*13)*Math.sin(t*4.7)*Math.sin(t*2.1))*0.75
-             +Math.max(0,Math.sin(t*7.3))*0.25;
+    /* speech-like burst pattern */
+    const raw=Math.max(0,Math.sin(t*13)*Math.sin(t*4.7)*Math.sin(t*2.1))*.75
+             +Math.max(0,Math.sin(t*7.3))*.25;
     lipAmp+=(raw-lipAmp)*.22;
-  } else if(analyser&&playing){
+  }else if(analyser&&playing){
     analyser.getByteFrequencyData(fBuf);
     let s=0; for(let b=2;b<=14;b++)s+=fBuf[b];
     lipAmp+=(s/13/255-lipAmp)*.30;
-  } else {
-    /* idle breath */
+  }else{
     lipAmp+=(Math.max(0,Math.sin(t*1.3))*.008-lipAmp)*.05;
   }
 
@@ -302,7 +344,7 @@ function animate(){
   for(const i of UL)pos[i*3+1]=baseY[i]+open*.55;
   for(const i of LL)pos[i*3+1]=baseY[i]-open*.45;
   geo.attributes.position.needsUpdate=true;
-  mat.opacity=0.90+Math.sin(t*.8)*.05+lipAmp*.20;
+  mat.opacity=.90+Math.sin(t*.8)*.05+lipAmp*.20;
   renderer.render(scene,camera);
 }
 animate();
