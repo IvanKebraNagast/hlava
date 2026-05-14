@@ -8,23 +8,21 @@
   *{margin:0;padding:0;box-sizing:border-box;}
   html,body{width:100%;height:100%;background:#000;overflow:hidden;}
   #c{position:fixed;top:0;left:0;width:100%;height:100%;}
-  #fi{
-    position:fixed;top:0;left:0;width:100%;height:100%;
-    opacity:0;cursor:pointer;z-index:10;font-size:16px;
-  }
-  #p1{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
-    width:90px;height:90px;border-radius:50%;
-    border:2px solid rgba(0,255,200,0.45);
-    pointer-events:none;opacity:0;
-    animation:pls 2.4s ease-out infinite;}
-  #p2{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
-    width:140px;height:140px;border-radius:50%;
-    border:1px solid rgba(0,255,200,0.2);
-    pointer-events:none;opacity:0;
-    animation:pls 2.4s ease-out infinite 0.8s;}
+  /* Invisible file input covers whole screen – most reliable on iOS */
+  #fi{position:fixed;top:0;left:0;width:100%;height:100%;
+      opacity:0;cursor:pointer;z-index:10;font-size:16px;}
+  /* Audio element hidden */
+  audio{display:none;}
+  /* Tap ripple hint */
+  .ring{position:fixed;top:50%;left:50%;border-radius:50%;
+        pointer-events:none;opacity:0;transform:translate(-50%,-50%) scale(0.3);}
+  #r1{width:80px;height:80px;border:2px solid rgba(0,255,200,.5);
+      animation:pls 2.4s ease-out infinite;}
+  #r2{width:135px;height:135px;border:1px solid rgba(0,255,200,.2);
+      animation:pls 2.4s ease-out infinite .8s;}
   @keyframes pls{
-    0%{opacity:0;transform:translate(-50%,-50%) scale(0.3);}
-    20%{opacity:1;}
+    0%  {opacity:0;transform:translate(-50%,-50%) scale(.3);}
+    20% {opacity:1;}
     100%{opacity:0;transform:translate(-50%,-50%) scale(2.8);}
   }
   .hide{display:none!important;}
@@ -32,199 +30,220 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<input type="file" id="fi" accept="audio/*,video/*,.mp3,.mp4,.wav,.ogg,.m4a,.aac">
-<div id="p1"></div>
-<div id="p2"></div>
+<input type="file" id="fi" accept="audio/*,video/*,.mp3,.mp4,.m4a,.wav,.ogg,.aac">
+<audio id="au" preload="auto"></audio>
+<div class="ring" id="r1"></div>
+<div class="ring" id="r2"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
-/* ─── renderer ──────────────────────────────────────────────────── */
+/* ─── renderer ─────────────────────────────────────────────────────── */
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setClearColor(0x000000, 1);
-
 const scene  = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(48, window.innerWidth/window.innerHeight, 0.1, 100);
 camera.position.z = 3.4;
 
-/* ─── glow sprite ───────────────────────────────────────────────── */
-function makeSprite() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
+/* ─── glow sprite ───────────────────────────────────────────────────── */
+function mkSprite() {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
   const ctx = c.getContext('2d');
-  const g = ctx.createRadialGradient(64,64,0,64,64,64);
-  g.addColorStop(0,    'rgba(220,255,252,1)');
-  g.addColorStop(0.15, 'rgba(0,248,220,1)');
-  g.addColorStop(0.45, 'rgba(0,200,178,0.55)');
-  g.addColorStop(1,    'rgba(0,0,0,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0,0,128,128);
+  const g = ctx.createRadialGradient(32,32,0,32,32,32);
+  g.addColorStop(0,   'rgba(210,255,250,1)');
+  g.addColorStop(0.2, 'rgba(0,245,218,1)');
+  g.addColorStop(0.5, 'rgba(0,195,175,.5)');
+  g.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,64,64);
   return new THREE.CanvasTexture(c);
 }
 
-/* ─── head builder ──────────────────────────────────────────────── */
+/* ─── head point-cloud ──────────────────────────────────────────────── */
 function buildHead() {
-  const V = [];          // flat float array [x,y,z, x,y,z …]
-  const UL = [];         // upper-lip vertex indices
-  const LL = [];         // lower-lip vertex indices
+  const V=[], UL=[], LL=[];
+  const R=Math.random, nr=(s)=>(R()-.5)*s;
 
-  function pt(x,y,z){ V.push(x,y,z); }
-  function ptLipU(x,y,z){ UL.push(V.length/3); V.push(x,y,z); }
-  function ptLipL(x,y,z){ LL.push(V.length/3); V.push(x,y,z); }
+  /* Base surface point for a given theta, phi */
+  function surfPoint(theta, phi) {
+    let x = Math.sin(theta)*Math.cos(phi)*0.74;
+    let y = Math.cos(theta)*1.10;
+    let z = Math.sin(theta)*Math.sin(phi);
 
-  const rnd = ()=> Math.random();
-  const nr  = (s)=> (rnd()-.5)*s;   // noise ±s/2
+    /* front rounder / back flatter */
+    z *= z >= 0 ? 0.82 : 0.64;
 
-  /* ══ 1. BASE HEAD ELLIPSOID ══════════════════════════════════════ */
-  for (let i=0; i<7500; i++) {
-    // uniform sphere sample
-    const th = Math.acos(2*rnd()-1);
-    const ph = 2*Math.PI*rnd();
-    let x = Math.sin(th)*Math.cos(ph)*0.74;
-    let y = Math.cos(th)*1.08;
-    let z = Math.sin(th)*Math.sin(ph);
-    z *= z>=0 ? 0.82 : 0.66;   // front rounder, back flatter
+    /* cranium wider at top */
+    if (y > 0.45) { const t=(y-0.45)/0.65; x *= 1+t*0.06; }
+
+    /* temporal narrowing (temples) */
+    if (y > 0.20 && y < 0.55 && Math.abs(x) > 0.50) {
+      const t=(Math.abs(x)-0.50)/0.25; z -= t*0.08;
+    }
 
     /* chin taper */
-    if (y < -0.52){ const t=(-y-0.52)/0.55; x*=1-t*0.58; z*=1-t*0.32; }
-    /* forehead slope back */
-    if (y >  0.70){ const t=(y-0.70)/0.36;  z-=t*0.09; }
-    /* very subtle mid-face push (will be overridden by explicit nose) */
-    if (z>0.32 && Math.abs(x)<0.28 && y>-0.22 && y<0.12){
-      const nd=Math.hypot(x/0.22,(y+0.05)/0.18);
-      if(nd<1) z+=(1-nd)*0.10;
+    if (y < -0.55) { const t=(-y-0.55)/0.58; x*=1-t*0.60; z*=1-t*0.35; }
+
+    /* forehead slope */
+    if (y > 0.72) { const t=(y-0.72)/0.38; z -= t*0.10; }
+
+    /* nose base push */
+    if (z>0.32 && Math.abs(x)<0.26 && y>-0.20 && y<0.14) {
+      const nd = Math.hypot(x/0.22,(y+0.04)/0.18);
+      if (nd<1) z += (1-nd)*0.12;
     }
-    x+=nr(0.018); y+=nr(0.018); z+=nr(0.018);
-    pt(x,y,z);
+    return [x,y,z];
   }
 
-  /* ══ 2. NOSE ═════════════════════════════════════════════════════ */
-  /* bridge — narrows top to bottom */
-  for (let i=0; i<200; i++){
-    const t = rnd();                     // 0=top(brow) 1=tip
-    const bw = 0.06 + t*0.07;           // gets wider toward tip
-    const x  = nr(bw*2);
-    const y  =  0.08 - t*0.24 + nr(0.02);
-    const z  =  0.72 + t*0.20 + nr(0.03);
-    pt(x,y,z);
+  /* ── face region checks ─────────────────────────────────────────── */
+  function eyeHollow(x,y,z) {
+    /* eye socket – recessed oval, left or right */
+    const lft = (x>0.12&&x<0.44&&y>0.10&&y<0.32&&z>0.54);
+    const rgt = (x<-0.12&&x>-0.44&&y>0.10&&y<0.32&&z>0.54);
+    return lft||rgt;
   }
-  /* tip — round bulb */
-  for (let i=0; i<280; i++){
-    const a=rnd()*Math.PI*2, r=rnd()*0.10;
-    pt( Math.cos(a)*r*1.3,  -0.18+Math.sin(a)*r*0.9+nr(0.03),  0.91+nr(0.04) );
+  function lipGap(x,y,z) {
+    /* thin gap between lips */
+    return (Math.abs(x)<0.24 && y>-0.38 && y<-0.32 && z>0.62);
   }
-  /* nostrils / wings */
-  for (let s of [-1,1]){
-    for (let i=0; i<180; i++){
-      const t=rnd();
-      pt( s*(0.08+t*0.14)+nr(0.025),  -0.20+nr(0.06),  0.84-t*0.07+nr(0.03) );
-    }
-    /* nostril base curve */
-    for (let i=0; i<80; i++){
-      pt( s*(0.06+rnd()*0.11),  -0.24+nr(0.03),  0.80+nr(0.03) );
-    }
+  function noseBridge(x,y,z) {
+    return (Math.abs(x)<0.10 && y>-0.18 && y<0.10 && z>0.62);
   }
-  /* philtrum groove (upper lip - nose transition) */
-  for (let i=0; i<80; i++){
-    pt( nr(0.12),  -0.26+nr(0.03),  0.82+nr(0.02) );
+  function nostrilDip(x,y,z) {
+    /* slight dip at nostril base */
+    return (Math.abs(x)>0.06&&Math.abs(x)<0.20&&y>-0.24&&y<-0.14&&z>0.68);
   }
 
-  /* ══ 3. LIPS ═════════════════════════════════════════════════════ */
-  /* upper lip — cupid's bow */
-  for (let i=0; i<350; i++){
-    const t = (rnd()-.5)*2;            // -1…+1 across width
-    const bow = -(Math.abs(Math.abs(t)-.5))*0.04; // dip at centre
-    ptLipU( t*0.28+nr(0.025),  -0.32+bow+nr(0.022),  0.80+nr(0.025) );
-  }
-  /* lower lip — fuller */
-  for (let i=0; i<400; i++){
-    const t = (rnd()-.5)*2;
-    const pout = (1-t*t)*0.05;
-    ptLipL( t*0.25+nr(0.025),  -0.42-pout+nr(0.022),  0.80+nr(0.025) );
-  }
-  /* lip line (seam) */
-  for (let i=0; i<180; i++){
-    const t=(rnd()-.5)*2;
-    const mid = -0.36+nr(0.012);
-    /* both lip halves at seam */
-    UL.push(V.length/3); V.push( t*0.27+nr(0.015), mid, 0.79+nr(0.018) );
-    LL.push(V.length/3); V.push( t*0.26+nr(0.015), mid, 0.79+nr(0.018) );
-  }
-  /* corners of mouth */
-  for (let s of [-1,1]){
-    for(let i=0;i<40;i++) pt(s*0.28+nr(0.02), -0.37+nr(0.025), 0.77+nr(0.02));
+  /* ── 1. MAIN HEAD SURFACE ──────────────────────────────────────── */
+  let attempts = 0;
+  while (V.length/3 < 9500 && attempts < 200000) {
+    attempts++;
+    const th = Math.acos(2*R()-1);
+    const ph = 2*Math.PI*R();
+    let [x,y,z] = surfPoint(th,ph);
+
+    /* rejection for hollows – these areas get far fewer particles */
+    if (eyeHollow(x,y,z)  && R() > 0.18) continue; // ~82% rejected = dark hollow
+    if (lipGap(x,y,z)     && R() > 0.08) continue; // ~92% rejected = thin gap
+    if (noseBridge(x,y,z) && R() > 0.45) continue; // 55% – slightly thinner bridge
+    if (nostrilDip(x,y,z) && R() > 0.40) continue;
+
+    /* micro noise */
+    x+=nr(0.016); y+=nr(0.016); z+=nr(0.016);
+
+    /* track upper/lower lip */
+    if (z>0.60 && Math.abs(x)<0.28) {
+      if (y>-0.33 && y<-0.22) UL.push(V.length/3);
+      if (y>-0.46 && y<-0.34) LL.push(V.length/3);
+    }
+    V.push(x,y,z);
   }
 
-  /* ══ 4. EYES ════════════════════════════════════════════════════ */
-  for (let s of [-1,1]){
-    const ex=s*0.29, ey=0.22;
-    /* upper eyelid arc */
-    for(let i=0;i<200;i++){
-      const t=(rnd()-.5)*2;
-      const arch=(1-t*t)*0.09;
-      pt( ex+t*0.19+nr(0.02),  ey+arch+nr(0.02),  0.68+nr(0.025) );
-    }
-    /* lower eyelid */
-    for(let i=0;i<120;i++){
-      const t=(rnd()-.5)*2;
-      pt( ex+t*0.16+nr(0.02),  ey-0.05+nr(0.02),  0.67+nr(0.02) );
-    }
-    /* inner eye scatter */
-    for(let i=0;i<100;i++){
-      pt( ex+nr(0.28),  ey+nr(0.12),  0.62+nr(0.03) );
-    }
-    /* eyebrow */
+  /* ── 2. NOSE (explicit protrusion) ────────────────────────────── */
+  /* bridge ridge */
+  for(let i=0;i<160;i++){
+    const t=R(); const x=nr(0.09+t*0.05); const y=0.08-t*0.22+nr(0.02);
+    const z=0.74+t*0.18+nr(0.025); V.push(x,y,z);
+  }
+  /* tip bulb */
+  for(let i=0;i<260;i++){
+    const a=R()*Math.PI*2, r=R()*0.10;
+    V.push(Math.cos(a)*r*1.2, -0.17+Math.sin(a)*r*0.85+nr(0.03), 0.92+nr(0.04));
+  }
+  /* ala (wings) */
+  for(let s of[-1,1]){
     for(let i=0;i<160;i++){
-      const t=(rnd()-.5)*2;
-      const arch=(1-t*t)*0.07;
-      pt( ex+t*0.20+nr(0.02),  ey+0.18+arch+nr(0.025),  0.62+nr(0.025) );
+      const t=R();
+      V.push(s*(0.09+t*0.14)+nr(0.02), -0.18+nr(0.07), 0.84-t*0.08+nr(0.03));
     }
-    /* brow ridge highlight */
-    for(let i=0;i<80;i++){
-      const t=(rnd()-.5)*2;
-      pt( ex+t*0.22+nr(0.02),  ey+0.10+nr(0.02),  0.70+nr(0.02) );
+    /* nostril base */
+    for(let i=0;i<70;i++)
+      V.push(s*(0.07+R()*0.10), -0.23+nr(0.03), 0.80+nr(0.025));
+  }
+
+  /* ── 3. LIPS (thin, natural) ───────────────────────────────────── */
+  /* upper lip cupid bow */
+  for(let i=0;i<260;i++){
+    const t=(R()-.5)*2;
+    const bow=-(Math.abs(Math.abs(t)-.5))*0.035;
+    ptLip(UL, t*0.27+nr(0.022), -0.30+bow+nr(0.020), 0.78+nr(0.022));
+  }
+  /* lower lip */
+  for(let i=0;i<300;i++){
+    const t=(R()-.5)*2;
+    ptLip(LL, t*0.25+nr(0.022), -0.42-(1-t*t)*0.04+nr(0.020), 0.78+nr(0.022));
+  }
+  /* philtrum */
+  for(let i=0;i<70;i++) V.push(nr(0.10), -0.25+nr(0.03), 0.82+nr(0.02));
+
+  function ptLip(arr,x,y,z){ arr.push(V.length/3); V.push(x,y,z); }
+
+  /* ── 4. BROW RIDGE (slight protrusion above eyes) ─────────────── */
+  for(let s of[-1,1]){
+    for(let i=0;i<130;i++){
+      const t=(R()-.5)*2;
+      const arch=(1-t*t)*0.06;
+      V.push(s*(0.26+t*0.20)+nr(0.02), 0.36+arch+nr(0.022), 0.64+nr(0.022));
     }
   }
 
-  /* ══ 5. CHEEKBONES ══════════════════════════════════════════════ */
-  for(let s of [-1,1]){
-    for(let i=0;i<150;i++){
-      pt( s*(0.50+rnd()*0.12)+nr(0.03), 0.02+nr(0.10), 0.66+rnd()*0.08+nr(0.02) );
+  /* ── 5. EYELID LINES ───────────────────────────────────────────── */
+  for(let s of[-1,1]){
+    /* upper lid */
+    for(let i=0;i<120;i++){
+      const t=(R()-.5)*2;
+      V.push(s*(0.28+t*0.17)+nr(0.018), 0.22+(1-t*t)*0.08+nr(0.018), 0.70+nr(0.020));
+    }
+    /* lower lid */
+    for(let i=0;i<80;i++)
+      V.push(s*(0.28+nr(0.16)), 0.14+nr(0.018), 0.68+nr(0.018));
+    /* inner corner */
+    for(let i=0;i<40;i++)
+      V.push(s*0.14+nr(0.025), 0.19+nr(0.03), 0.68+nr(0.02));
+  }
+
+  /* ── 6. CHEEKBONES ─────────────────────────────────────────────── */
+  for(let s of[-1,1]){
+    for(let i=0;i<120;i++)
+      V.push(s*(0.52+R()*0.10)+nr(0.025), 0.02+nr(0.08), 0.62+R()*0.10+nr(0.02));
+  }
+
+  /* ── 7. CHIN DEFINITION ────────────────────────────────────────── */
+  for(let i=0;i<160;i++)
+    V.push(nr(0.24), -0.70+nr(0.06), 0.50+R()*0.12+nr(0.02));
+
+  /* ── 8. EARS (side, partial) ───────────────────────────────────── */
+  for(let s of[-1,1]){
+    for(let i=0;i<200;i++){
+      const a=R()*Math.PI*2, r=R()*0.12;
+      V.push(s*(0.74+r*.5)+nr(0.02), 0.05+Math.sin(a)*0.22*r*5+nr(0.04), -0.12+Math.cos(a)*0.10*r*5+nr(0.03));
     }
   }
 
-  /* ══ 6. JAW / CHIN ══════════════════════════════════════════════ */
-  for(let i=0;i<200;i++){
-    pt( nr(0.30), -0.68+nr(0.06), 0.52+rnd()*0.12+nr(0.02) );
-  }
-
-  /* ══ 7. NECK ════════════════════════════════════════════════════ */
+  /* ── 9. NECK ───────────────────────────────────────────────────── */
   for(let i=0;i<700;i++){
-    const a=rnd()*Math.PI*2, r=0.22+rnd()*.05;
-    pt( Math.cos(a)*r,  -1.06+rnd()*.44,  Math.sin(a)*r*.94 );
+    const a=R()*Math.PI*2, r=0.22+R()*.05;
+    V.push(Math.cos(a)*r, -1.06+R()*.44, Math.sin(a)*r*.94);
   }
 
-  /* ══ 8. COLLAR ELLIPSE ══════════════════════════════════════════ */
-  for(let i=0;i<580;i++){
-    const a=(i/580)*Math.PI*2+nr(0.05);
-    pt( Math.cos(a)*(0.92+nr(0.06)),  -1.08+nr(0.04),  Math.sin(a)*(0.34+nr(0.03)) );
+  /* ── 10. COLLAR ELLIPSE ────────────────────────────────────────── */
+  for(let i=0;i<600;i++){
+    const a=(i/600)*Math.PI*2+nr(.05);
+    V.push(Math.cos(a)*(0.92+nr(.06)), -1.08+nr(.04), Math.sin(a)*(0.36+nr(.03)));
   }
 
-  /* ══ 9. OUTER HALO CIRCLE ═══════════════════════════════════════ */
-  for(let i=0;i<680;i++){
-    const a=(i/680)*Math.PI*2+nr(0.014);
-    const r=1.46+nr(0.012);
-    pt( Math.cos(a)*r*.95,  Math.sin(a)*r,  -0.24+nr(0.01) );
+  /* ── 11. OUTER HALO CIRCLE ─────────────────────────────────────── */
+  for(let i=0;i<700;i++){
+    const a=(i/700)*Math.PI*2+nr(.014);
+    const r=1.46+nr(.012);
+    V.push(Math.cos(a)*r*.95, Math.sin(a)*r, -0.24+nr(.01));
   }
 
   return { verts: new Float32Array(V), UL, LL };
 }
 
-const { verts, UL, LL } = buildHead();
-
-/* store base Y for lip animation */
+const {verts, UL, LL} = buildHead();
 const baseY = new Float32Array(verts.length/3);
 for(let i=0;i<verts.length/3;i++) baseY[i]=verts[i*3+1];
 
@@ -233,104 +252,93 @@ geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
 
 const isMobile = window.innerWidth < 768;
 const mat = new THREE.PointsMaterial({
-  size: isMobile ? 0.055 : 0.020,
-  map: makeSprite(),
+  size: isMobile ? 0.040 : 0.014,
+  map: mkSprite(),
   blending: THREE.AdditiveBlending,
-  transparent: true,
-  depthWrite: false,
+  transparent: true, depthWrite: false,
   color: new THREE.Color(0x00ffde),
-  opacity: 1.0,
-  sizeAttenuation: true,
+  opacity: 1.0, sizeAttenuation: true,
 });
-
 const pts = new THREE.Points(geo, mat);
-pts.rotation.x = -0.06;   // slight chin-down tilt
+pts.rotation.x = -0.06;
 scene.add(pts);
 
-/* ─── audio (iOS-safe via decodeAudioData) ──────────────────────── */
-let audioCtx = null, analyser = null, currentSrc = null;
-let lipAmp = 0, playing = false;
+/* ─── audio – <audio> element approach (works on iOS for ALL formats) ── */
+const auEl   = document.getElementById('au');
+const fi     = document.getElementById('fi');
+const r1     = document.getElementById('r1');
+const r2     = document.getElementById('r2');
 
-const fi = document.getElementById('fi');
-const p1 = document.getElementById('p1');
-const p2 = document.getElementById('p2');
+let audioCtx = null, analyser = null, mediaSrc = null;
+let lipAmp = 0, playing = false;
 
 fi.addEventListener('change', async () => {
   const file = fi.files[0];
   if (!file) return;
 
-  /* create AudioContext inside user-gesture handler (iOS requirement) */
+  /* create AudioContext INSIDE user-gesture handler – required on iOS */
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     analyser  = audioCtx.createAnalyser();
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.76;
     analyser.connect(audioCtx.destination);
+    /* connect audio element to analyser ONCE */
+    mediaSrc = audioCtx.createMediaElementSource(auEl);
+    mediaSrc.connect(analyser);
   }
+
   if (audioCtx.state === 'suspended') await audioCtx.resume();
 
-  /* stop previous */
-  if (currentSrc) { try { currentSrc.stop(); } catch(e){} currentSrc=null; }
-  playing = false;
+  /* swap track */
+  auEl.pause();
+  if (auEl._objUrl) URL.revokeObjectURL(auEl._objUrl);
+  auEl._objUrl = URL.createObjectURL(file);
+  auEl.src     = auEl._objUrl;
+  auEl.load();
 
-  try {
-    const ab  = await file.arrayBuffer();
-    const buf = await audioCtx.decodeAudioData(ab);
-    currentSrc = audioCtx.createBufferSource();
-    currentSrc.buffer = buf;
-    currentSrc.connect(analyser);
-    currentSrc.start(0);
-    playing = true;
-    p1.classList.add('hide');
-    p2.classList.add('hide');
-    currentSrc.onended = () => {
-      playing=false; lipAmp=0;
-      p1.classList.remove('hide');
-      p2.classList.remove('hide');
-    };
-  } catch(err) {
-    console.error('Audio error:', err);
-    alert('Chyba prehrávania. Skús iný formát súboru (MP3 / WAV).');
-  }
+  auEl.oncanplay = async () => {
+    auEl.oncanplay = null;
+    try {
+      await auEl.play();
+      playing = true;
+      r1.classList.add('hide'); r2.classList.add('hide');
+    } catch(e) { console.error('play() failed:', e); }
+  };
+  auEl.onended = () => {
+    playing = false; lipAmp = 0;
+    r1.classList.remove('hide'); r2.classList.remove('hide');
+  };
 });
 
-/* ─── render loop ───────────────────────────────────────────────── */
-let t = 0;
-const fBuf = new Uint8Array(128);
+/* ─── render loop ───────────────────────────────────────────────────── */
+let t=0; const fBuf=new Uint8Array(128);
+function animate(){
+  requestAnimationFrame(animate); t+=0.008;
+  pts.rotation.y = Math.sin(t*.26)*.09;
 
-function animate() {
-  requestAnimationFrame(animate);
-  t += 0.008;
-
-  /* gentle idle sway */
-  pts.rotation.y = Math.sin(t * 0.26) * 0.10;
-
-  /* lip amplitude */
-  if (analyser && playing) {
+  if (analyser && playing){
     analyser.getByteFrequencyData(fBuf);
     let s=0; for(let b=2;b<=14;b++) s+=fBuf[b];
-    lipAmp += (s/13/255 - lipAmp) * 0.30;
+    lipAmp += (s/13/255 - lipAmp)*.30;
   } else {
-    /* idle breathing */
-    lipAmp += (Math.max(0, Math.sin(t*1.3))*0.008 - lipAmp) * 0.05;
+    lipAmp += (Math.max(0,Math.sin(t*1.3))*.008 - lipAmp)*.05;
   }
 
-  /* animate lips */
-  const pos  = geo.attributes.position.array;
-  const open = lipAmp * 0.26;
-  for (const i of UL) pos[i*3+1] = baseY[i] + open * 0.55;
-  for (const i of LL) pos[i*3+1] = baseY[i] - open * 0.45;
-  geo.attributes.position.needsUpdate = true;
-
-  mat.opacity = 0.90 + Math.sin(t*.8)*0.06 + lipAmp*0.20;
-  renderer.render(scene, camera);
+  const pos=geo.attributes.position.array;
+  const open=lipAmp*.26;
+  for(const i of UL) pos[i*3+1]=baseY[i]+open*.55;
+  for(const i of LL) pos[i*3+1]=baseY[i]-open*.45;
+  geo.attributes.position.needsUpdate=true;
+  mat.opacity=0.90+Math.sin(t*.8)*.05+lipAmp*.20;
+  renderer.render(scene,camera);
 }
 animate();
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth/window.innerHeight;
+window.addEventListener('resize',()=>{
+  camera.aspect=window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(window.innerWidth,window.innerHeight);
 });
 </script>
 </body>
